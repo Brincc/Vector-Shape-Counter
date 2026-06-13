@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SVG Shape Counter</title>
+<style>
+  :root {
+    --ink: #1a2b2a;
+    --paper: #f3efe6;
+    --line: #c9c2b4;
+    --accent: #d6603a;
+    --mono: 'IBM Plex Mono', 'Courier New', monospace;
+    --sans: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    min-height: 100vh;
+  }
+
+  body {
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 32px 32px;
+    background-position: -1px -1px;
+  }
+
+  .wrap {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+  }
+
+  header {
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 20px;
+    margin-bottom: 32px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 8px;
+  }
+
+  h1 {
+    font-size: clamp(28px, 5vw, 44px);
+    margin: 0;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 1.05;
+  }
+
+  .sub {
+    margin: 10px 0 0;
+    font-size: 15px;
+    color: #5b5b52;
+    max-width: 50ch;
+  }
+
+  /* Dropzone */
+  .dropzone {
+    margin-top: 32px;
+    border: 2px dashed var(--ink);
+    background: #fbf9f3;
+    padding: 40px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+    position: relative;
+  }
+
+  .dropzone:hover {
+    border-color: var(--accent);
+  }
+
+  .dropzone.drag {
+    border-color: var(--accent);
+    background: #fff3ec;
+    transform: scale(0.998);
+  }
+
+  .dropzone input[type="file"] {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .dz-icon {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    margin-bottom: 10px;
+  }
+
+  .dz-title {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+
+  .dz-hint {
+    font-size: 13px;
+    color: #807a6c;
+    margin: 0;
+  }
+
+  .filename {
+    font-family: var(--mono);
+    font-size: 13px;
+    margin-top: 12px;
+    color: var(--ink);
+    word-break: break-all;
+  }
+
+  /* Results */
+  .results {
+    margin-top: 40px;
+    display: none;
+  }
+
+  .results.visible {
+    display: block;
+  }
+
+  .total-row {
+    display: flex;
+    align-items: baseline;
+    gap: 18px;
+    border: 2px solid var(--ink);
+    background: #fffdf8;
+    padding: 24px 28px;
+    margin-bottom: 24px;
+  }
+
+  .total-num {
+    font-family: var(--mono);
+    font-size: clamp(40px, 8vw, 64px);
+    font-weight: 700;
+    line-height: 1;
+    color: var(--accent);
+  }
+
+  .total-label {
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  .total-note {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: #807a6c;
+    text-align: right;
+    line-height: 1.5;
+  }
+
+  .breakdown-title {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #807a6c;
+    margin: 0 0 12px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 8px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 9px 6px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  th {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #807a6c;
+    font-weight: 600;
+  }
+
+  td.tag {
+    font-family: var(--mono);
+    font-weight: 600;
+  }
+
+  td.count {
+    font-family: var(--mono);
+    text-align: right;
+    font-weight: 700;
+    color: var(--ink);
+    width: 80px;
+  }
+
+  td.bar-cell {
+    width: 40%;
+  }
+
+  .bar-track {
+    height: 6px;
+    background: var(--line);
+    position: relative;
+  }
+
+  .bar-fill {
+    height: 100%;
+    background: var(--accent);
+  }
+
+  .preview-section {
+    margin-top: 28px;
+  }
+
+  .preview-frame {
+    border: 1px solid var(--line);
+    background:
+      repeating-conic-gradient(#fbf9f3 0% 25%, #f0ebe0 0% 50%) 50% / 20px 20px;
+    padding: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    max-height: 320px;
+    overflow: hidden;
+  }
+
+  .preview-frame svg {
+    max-width: 100%;
+    max-height: 288px;
+    width: auto;
+    height: auto;
+  }
+
+  .error {
+    margin-top: 24px;
+    border: 2px solid var(--accent);
+    background: #fff3ec;
+    color: #8a3014;
+    padding: 16px 20px;
+    font-size: 14px;
+    display: none;
+  }
+
+  .error.visible {
+    display: block;
+  }
+
+  .error strong {
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 11px;
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  footer {
+    margin-top: 56px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+    color: #a39d8e;
+    font-family: var(--mono);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="eyebrow">SVG / Inventory</p>
+    <h1>Shape Counter</h1>
+    <p class="sub">Drop in an SVG and get a count of every drawable element inside it — paths, circles, rectangles, text, groups, and more — broken down by type.</p>
+  </header>
+
+  <div class="dropzone" id="dropzone">
+    <input type="file" id="fileInput" accept=".svg,image/svg+xml">
+    <div class="dz-icon">⌁ DRAG / DROP / CLICK</div>
+    <p class="dz-title">Upload an SVG file</p>
+    <p class="dz-hint">.svg files only — processed entirely in your browser</p>
+    <div class="filename" id="filename"></div>
+  </div>
+
+  <div class="error" id="error">
+    <strong>Couldn't read file</strong>
+    <span id="errorMsg"></span>
+  </div>
+
+  <div class="results" id="results">
+    <div class="total-row">
+      <div class="total-num" id="totalCount">0</div>
+      <div class="total-label">drawable<br>shapes</div>
+      <div class="total-note" id="totalNote"></div>
+    </div>
+
+    <p class="breakdown-title">Breakdown by element type</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Element</th>
+          <th>Bar</th>
+          <th>Count</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+
+    <div class="preview-section">
+      <p class="breakdown-title">Preview</p>
+      <div class="preview-frame" id="previewFrame"></div>
+    </div>
+  </div>
+
+  <footer>nothing leaves your browser — files are parsed locally</footer>
+</div>
+
+<script>
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const filenameEl = document.getElementById('filename');
+  const resultsEl = document.getElementById('results');
+  const errorEl = document.getElementById('error');
+  const errorMsg = document.getElementById('errorMsg');
+  const totalCountEl = document.getElementById('totalCount');
+  const totalNoteEl = document.getElementById('totalNote');
+  const tableBody = document.getElementById('tableBody');
+  const previewFrame = document.getElementById('previewFrame');
+
+  // Shape/drawable elements we count as "objects"
+  const SHAPE_TAGS = [
+    'path', 'rect', 'circle', 'ellipse', 'line',
+    'polyline', 'polygon', 'text', 'image', 'use'
+  ];
+
+  // Other structural elements worth reporting separately
+  const STRUCTURAL_TAGS = ['g', 'tspan'];
+
+  ['dragenter', 'dragover'].forEach(evt => {
+    dropzone.addEventListener(evt, e => {
+      e.preventDefault();
+      dropzone.classList.add('drag');
+    });
+  });
+
+  ['dragleave', 'drop'].forEach(evt => {
+    dropzone.addEventListener(evt, e => {
+      e.preventDefault();
+      dropzone.classList.remove('drag');
+    });
+  });
+
+  dropzone.addEventListener('drop', e => {
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  });
+
+  fileInput.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (file) handleFile(file);
+  });
+
+  function handleFile(file) {
+    hideError();
+    if (!file.name.toLowerCase().endsWith('.svg') && file.type !== 'image/svg+xml') {
+      showError('That file doesn\'t look like an SVG. Please choose a .svg file.');
+      return;
+    }
+
+    filenameEl.textContent = file.name;
+
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        analyzeSVG(e.target.result, file.name);
+      } catch (err) {
+        showError(err.message || 'Unable to parse this file as SVG.');
+        resultsEl.classList.remove('visible');
+      }
+    };
+    reader.onerror = () => showError('Could not read the file from disk.');
+    reader.readAsText(file);
+  }
+
+  function analyzeSVG(text, filename) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(text, 'image/svg+xml');
+
+    const parserError = doc.querySelector('parsererror');
+    if (parserError) {
+      throw new Error('The file isn\'t valid XML/SVG — it may be corrupted.');
+    }
+
+    const svgRoot = doc.querySelector('svg');
+    if (!svgRoot) {
+      throw new Error('No <svg> root element found in this file.');
+    }
+
+    // Count every element, categorize
+    const counts = {};
+    const allEls = doc.querySelectorAll('*');
+    let shapeTotal = 0;
+
+    allEls.forEach(el => {
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'svg') return;
+      counts[tag] = (counts[tag] || 0) + 1;
+      if (SHAPE_TAGS.includes(tag)) shapeTotal += 1;
+    });
+
+    renderResults(counts, shapeTotal, svgRoot, filename);
+  }
+
+  function renderResults(counts, shapeTotal, svgRoot, filename) {
+    totalCountEl.textContent = shapeTotal;
+    totalNoteEl.textContent = filename;
+
+    // Sort: shapes first (by count desc), then structural/other (by count desc)
+    const entries = Object.entries(counts);
+    const shapeEntries = entries.filter(([tag]) => SHAPE_TAGS.includes(tag))
+      .sort((a, b) => b[1] - a[1]);
+    const otherEntries = entries.filter(([tag]) => !SHAPE_TAGS.includes(tag))
+      .sort((a, b) => b[1] - a[1]);
+
+    const maxCount = Math.max(...entries.map(([, c]) => c), 1);
+
+    tableBody.innerHTML = '';
+
+    if (shapeEntries.length === 0) {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td colspan="3" style="font-family: var(--mono); color: #807a6c; padding: 16px 6px;">No drawable shape elements (path, rect, circle, etc.) were found.</td>`;
+      tableBody.appendChild(row);
+    }
+
+    [...shapeEntries, ...otherEntries].forEach(([tag, count]) => {
+      const isShape = SHAPE_TAGS.includes(tag);
+      const row = document.createElement('tr');
+      const pct = Math.round((count / maxCount) * 100);
+      row.innerHTML = `
+        <td class="tag">&lt;${tag}&gt;${isShape ? '' : '<span style="font-family: var(--sans); font-weight: 400; color:#a39d8e; font-size:11px;"> · structural</span>'}</td>
+        <td class="bar-cell"><div class="bar-track"><div class="bar-fill" style="width:${pct}%; ${isShape ? '' : 'opacity:0.35;'}"></div></div></td>
+        <td class="count">${count}</td>
+      `;
+      tableBody.appendChild(row);
+    });
+
+    // Preview
+    previewFrame.innerHTML = '';
+    const clone = svgRoot.cloneNode(true);
+    if (!clone.getAttribute('width') && !clone.getAttribute('height')) {
+      clone.setAttribute('width', '100%');
+    }
+    previewFrame.appendChild(clone);
+
+    resultsEl.classList.add('visible');
+  }
+
+  function showError(msg) {
+    errorMsg.textContent = msg;
+    errorEl.classList.add('visible');
+  }
+
+  function hideError() {
+    errorEl.classList.remove('visible');
+  }
+</script>
+</body>
+</html>
