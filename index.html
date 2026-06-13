@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SVG Shape Counter</title>
+<title>Shape Counter — SVG & PDF</title>
 <style>
   :root {
     --ink: #1a2b2a;
@@ -249,11 +249,20 @@
     overflow: hidden;
   }
 
-  .preview-frame svg {
+  .preview-frame svg,
+  .preview-frame canvas {
     max-width: 100%;
     max-height: 288px;
     width: auto;
     height: auto;
+  }
+
+  .preview-note {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: #807a6c;
+    margin: 10px 0 0;
+    text-align: center;
   }
 
   .error {
@@ -296,16 +305,16 @@
 <body>
 <div class="wrap">
   <header>
-    <p class="eyebrow">SVG / Inventory</p>
+    <p class="eyebrow">SVG &amp; PDF / Inventory</p>
     <h1>Shape Counter</h1>
-    <p class="sub">Drop in an SVG and get a count of every drawable element inside it — paths, circles, rectangles, text, groups, and more — broken down by type.</p>
+    <p class="sub">Drop in an SVG or PDF and get a count of every drawable object inside it — paths, shapes, images, and text — broken down by type.</p>
   </header>
 
   <div class="dropzone" id="dropzone">
-    <input type="file" id="fileInput" accept=".svg,image/svg+xml">
+    <input type="file" id="fileInput" accept=".svg,.pdf,image/svg+xml,application/pdf">
     <div class="dz-icon">⌁ DRAG / DROP / CLICK</div>
-    <p class="dz-title">Upload an SVG file</p>
-    <p class="dz-hint">.svg files only — processed entirely in your browser</p>
+    <p class="dz-title">Upload an SVG or PDF file</p>
+    <p class="dz-hint">.svg or .pdf — processed entirely in your browser</p>
     <div class="filename" id="filename"></div>
   </div>
 
@@ -317,15 +326,15 @@
   <div class="results" id="results">
     <div class="total-row">
       <div class="total-num" id="totalCount">0</div>
-      <div class="total-label">drawable<br>shapes</div>
+      <div class="total-label">drawable<br>objects</div>
       <div class="total-note" id="totalNote"></div>
     </div>
 
-    <p class="breakdown-title">Breakdown by element type</p>
+    <p class="breakdown-title">Breakdown by type</p>
     <table>
       <thead>
         <tr>
-          <th>Element</th>
+          <th id="colHeadType">Element</th>
           <th>Bar</th>
           <th>Count</th>
         </tr>
@@ -336,13 +345,22 @@
     <div class="preview-section">
       <p class="breakdown-title">Preview</p>
       <div class="preview-frame" id="previewFrame"></div>
+      <p class="preview-note" id="previewNote"></p>
     </div>
   </div>
 
   <footer>nothing leaves your browser — files are parsed locally</footer>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
 <script>
+  // Configure pdf.js worker
+  if (window.pdfjsLib) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+
   const dropzone = document.getElementById('dropzone');
   const fileInput = document.getElementById('fileInput');
   const filenameEl = document.getElementById('filename');
@@ -351,17 +369,43 @@
   const errorMsg = document.getElementById('errorMsg');
   const totalCountEl = document.getElementById('totalCount');
   const totalNoteEl = document.getElementById('totalNote');
+  const colHeadType = document.getElementById('colHeadType');
   const tableBody = document.getElementById('tableBody');
   const previewFrame = document.getElementById('previewFrame');
+  const previewNote = document.getElementById('previewNote');
 
-  // Shape/drawable elements we count as "objects"
-  const SHAPE_TAGS = [
+  // ---- SVG element categories ----
+  // Drawable shape/visual elements we count as "objects"
+  const SVG_SHAPE_TAGS = [
     'path', 'rect', 'circle', 'ellipse', 'line',
     'polyline', 'polygon', 'text', 'image', 'use'
   ];
 
-  // Other structural elements worth reporting separately
-  const STRUCTURAL_TAGS = ['g', 'tspan'];
+  // ---- PDF operator categories ----
+  // Operators that paint a vector path onto the page (one "shape" each)
+  const PDF_SHAPE_OPS = [
+    'fill', 'eoFill', 'stroke', 'closeStroke',
+    'fillStroke', 'eoFillStroke', 'closeFillStroke', 'closeEOFillStroke'
+  ];
+  // Operators that paint an image/raster object
+  const PDF_IMAGE_OPS = [
+    'paintImageXObject', 'paintInlineImageXObject',
+    'paintImageMaskXObject', 'paintImageMaskXObjectGroup',
+    'paintSolidColorImageMask'
+  ];
+  // Operators that render text runs
+  const PDF_TEXT_OPS = ['showText', 'showSpacedText'];
+
+  const PDF_FRIENDLY_NAMES = {
+    fill: 'filled path', eoFill: 'filled path (even-odd)',
+    stroke: 'stroked path', closeStroke: 'closed stroked path',
+    fillStroke: 'filled + stroked path', eoFillStroke: 'filled + stroked (even-odd)',
+    closeFillStroke: 'closed fill + stroke', closeEOFillStroke: 'closed fill + stroke (even-odd)',
+    paintImageXObject: 'image', paintInlineImageXObject: 'inline image',
+    paintImageMaskXObject: 'image mask', paintImageMaskXObjectGroup: 'image mask group',
+    paintSolidColorImageMask: 'solid color mask',
+    showText: 'text run', showSpacedText: 'text run (spaced)'
+  };
 
   ['dragenter', 'dragover'].forEach(evt => {
     dropzone.addEventListener(evt, e => {
@@ -389,25 +433,40 @@
 
   function handleFile(file) {
     hideError();
-    if (!file.name.toLowerCase().endsWith('.svg') && file.type !== 'image/svg+xml') {
-      showError('That file doesn\'t look like an SVG. Please choose a .svg file.');
+    resultsEl.classList.remove('visible');
+
+    const name = file.name.toLowerCase();
+    const isSVG = name.endsWith('.svg') || file.type === 'image/svg+xml';
+    const isPDF = name.endsWith('.pdf') || file.type === 'application/pdf';
+
+    if (!isSVG && !isPDF) {
+      showError('That file isn\'t an SVG or a PDF. Please choose a .svg or .pdf file.');
       return;
     }
 
     filenameEl.textContent = file.name;
-
     const reader = new FileReader();
-    reader.onload = e => {
-      try {
-        analyzeSVG(e.target.result, file.name);
-      } catch (err) {
-        showError(err.message || 'Unable to parse this file as SVG.');
-        resultsEl.classList.remove('visible');
-      }
-    };
-    reader.onerror = () => showError('Could not read the file from disk.');
-    reader.readAsText(file);
+
+    if (isSVG) {
+      reader.onload = e => {
+        try {
+          analyzeSVG(e.target.result, file.name);
+        } catch (err) {
+          showError(err.message || 'Unable to parse this file as SVG.');
+        }
+      };
+      reader.onerror = () => showError('Could not read the file from disk.');
+      reader.readAsText(file);
+    } else {
+      reader.onload = e => {
+        analyzePDF(e.target.result, file.name);
+      };
+      reader.onerror = () => showError('Could not read the file from disk.');
+      reader.readAsArrayBuffer(file);
+    }
   }
+
+  // ---------------- SVG analysis ----------------
 
   function analyzeSVG(text, filename) {
     const parser = new DOMParser();
@@ -423,7 +482,6 @@
       throw new Error('No <svg> root element found in this file.');
     }
 
-    // Count every element, categorize
     const counts = {};
     const allEls = doc.querySelectorAll('*');
     let shapeTotal = 0;
@@ -432,54 +490,137 @@
       const tag = el.tagName.toLowerCase();
       if (tag === 'svg') return;
       counts[tag] = (counts[tag] || 0) + 1;
-      if (SHAPE_TAGS.includes(tag)) shapeTotal += 1;
+      if (SVG_SHAPE_TAGS.includes(tag)) shapeTotal += 1;
     });
 
-    renderResults(counts, shapeTotal, svgRoot, filename);
+    const rows = Object.entries(counts).map(([tag, count]) => ({
+      label: `&lt;${tag}&gt;`,
+      count,
+      isPrimary: SVG_SHAPE_TAGS.includes(tag),
+      footnote: SVG_SHAPE_TAGS.includes(tag) ? '' : 'structural'
+    }));
+
+    colHeadType.textContent = 'Element';
+    renderTable(rows, shapeTotal, filename);
+    renderSVGPreview(svgRoot);
+    previewNote.textContent = '';
+    resultsEl.classList.add('visible');
   }
 
-  function renderResults(counts, shapeTotal, svgRoot, filename) {
-    totalCountEl.textContent = shapeTotal;
-    totalNoteEl.textContent = filename;
-
-    // Sort: shapes first (by count desc), then structural/other (by count desc)
-    const entries = Object.entries(counts);
-    const shapeEntries = entries.filter(([tag]) => SHAPE_TAGS.includes(tag))
-      .sort((a, b) => b[1] - a[1]);
-    const otherEntries = entries.filter(([tag]) => !SHAPE_TAGS.includes(tag))
-      .sort((a, b) => b[1] - a[1]);
-
-    const maxCount = Math.max(...entries.map(([, c]) => c), 1);
-
-    tableBody.innerHTML = '';
-
-    if (shapeEntries.length === 0) {
-      const row = document.createElement('tr');
-      row.innerHTML = `<td colspan="3" style="font-family: var(--mono); color: #807a6c; padding: 16px 6px;">No drawable shape elements (path, rect, circle, etc.) were found.</td>`;
-      tableBody.appendChild(row);
-    }
-
-    [...shapeEntries, ...otherEntries].forEach(([tag, count]) => {
-      const isShape = SHAPE_TAGS.includes(tag);
-      const row = document.createElement('tr');
-      const pct = Math.round((count / maxCount) * 100);
-      row.innerHTML = `
-        <td class="tag">&lt;${tag}&gt;${isShape ? '' : '<span style="font-family: var(--sans); font-weight: 400; color:#a39d8e; font-size:11px;"> · structural</span>'}</td>
-        <td class="bar-cell"><div class="bar-track"><div class="bar-fill" style="width:${pct}%; ${isShape ? '' : 'opacity:0.35;'}"></div></div></td>
-        <td class="count">${count}</td>
-      `;
-      tableBody.appendChild(row);
-    });
-
-    // Preview
+  function renderSVGPreview(svgRoot) {
     previewFrame.innerHTML = '';
     const clone = svgRoot.cloneNode(true);
     if (!clone.getAttribute('width') && !clone.getAttribute('height')) {
       clone.setAttribute('width', '100%');
     }
     previewFrame.appendChild(clone);
+  }
 
-    resultsEl.classList.add('visible');
+  // ---------------- PDF analysis ----------------
+
+  async function analyzePDF(arrayBuffer, filename) {
+    if (!window.pdfjsLib) {
+      showError('The PDF engine failed to load. Check your internet connection and try again.');
+      return;
+    }
+
+    try {
+      // Build a reverse lookup: opcode number -> operator name
+      const OP_NAMES = {};
+      for (const key in pdfjsLib.OPS) {
+        OP_NAMES[pdfjsLib.OPS[key]] = key;
+      }
+
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pageCount = pdf.numPages;
+      const counts = {};
+
+      for (let i = 1; i <= pageCount; i++) {
+        const page = await pdf.getPage(i);
+        const opList = await page.getOperatorList();
+        opList.fnArray.forEach(fn => {
+          const name = OP_NAMES[fn];
+          if (!name) return;
+          counts[name] = (counts[name] || 0) + 1;
+        });
+        page.cleanup();
+      }
+
+      let total = 0;
+      const rows = [];
+
+      Object.entries(counts).forEach(([opName, count]) => {
+        const isShape = PDF_SHAPE_OPS.includes(opName);
+        const isImage = PDF_IMAGE_OPS.includes(opName);
+        const isText = PDF_TEXT_OPS.includes(opName);
+        const isPrimary = isShape || isImage || isText;
+        if (isPrimary) total += count;
+
+        rows.push({
+          label: PDF_FRIENDLY_NAMES[opName] || opName,
+          count,
+          isPrimary,
+          footnote: isPrimary ? '' : 'structural'
+        });
+      });
+
+      colHeadType.textContent = 'Object type';
+      renderTable(rows, total, filename, ` · ${pageCount} page${pageCount === 1 ? '' : 's'}`);
+      await renderPDFPreview(pdf);
+      resultsEl.classList.add('visible');
+    } catch (err) {
+      showError(err.message || 'Unable to parse this file as PDF.');
+    }
+  }
+
+  async function renderPDFPreview(pdf) {
+    previewFrame.innerHTML = '';
+    try {
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 1.5 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      previewFrame.appendChild(canvas);
+      previewNote.textContent = pdf.numPages > 1
+        ? `Showing page 1 of ${pdf.numPages}`
+        : '';
+    } catch (err) {
+      previewFrame.textContent = 'Preview unavailable for this file.';
+    }
+  }
+
+  // ---------------- Shared rendering ----------------
+
+  function renderTable(rows, total, filename, extraNote) {
+    totalCountEl.textContent = total;
+    totalNoteEl.textContent = filename + (extraNote || '');
+
+    const primaryRows = rows.filter(r => r.isPrimary).sort((a, b) => b.count - a.count);
+    const otherRows = rows.filter(r => !r.isPrimary).sort((a, b) => b.count - a.count);
+
+    const maxCount = Math.max(...rows.map(r => r.count), 1);
+
+    tableBody.innerHTML = '';
+
+    if (primaryRows.length === 0) {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td colspan="3" style="font-family: var(--mono); color: #807a6c; padding: 16px 6px;">No drawable objects were found.</td>`;
+      tableBody.appendChild(row);
+    }
+
+    [...primaryRows, ...otherRows].forEach(r => {
+      const row = document.createElement('tr');
+      const pct = Math.round((r.count / maxCount) * 100);
+      row.innerHTML = `
+        <td class="tag">${r.label}${r.footnote ? `<span style="font-family: var(--sans); font-weight: 400; color:#a39d8e; font-size:11px;"> · ${r.footnote}</span>` : ''}</td>
+        <td class="bar-cell"><div class="bar-track"><div class="bar-fill" style="width:${pct}%; ${r.isPrimary ? '' : 'opacity:0.35;'}"></div></div></td>
+        <td class="count">${r.count}</td>
+      `;
+      tableBody.appendChild(row);
+    });
   }
 
   function showError(msg) {
